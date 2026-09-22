@@ -1,11 +1,11 @@
-# 🗑️ Analisi sullo Smaltimento dei Rifiuti Urbani
+# Analisi sullo Smaltimento dei Rifiuti Urbani
 
 > **Elaborato di Data Mining** — Università  
 > *Matteo Caruso, Elia Corti, Federico Jarach, Tommaso Zanni*
 
 ---
 
-## 📋 Case of Study
+## Case of Study
 
 Il progetto analizza il fenomeno dello **smaltimento dei rifiuti urbani** a livello comunale in Italia, sfruttando un dataset pubblico (`public_data_waste_fee.csv`) contenente **4.341 osservazioni** e **39 variabili** relative a caratteristiche demografiche, geografiche, economiche e di gestione dei rifiuti di ogni comune.
 
@@ -16,7 +16,7 @@ L'analisi si articola in **due macro-obiettivi**:
 
 ---
 
-## 📊 Dataset
+## Dataset
 
 | Attributo         | Dettaglio                                                              |
 |-------------------|------------------------------------------------------------------------|
@@ -28,7 +28,7 @@ L'analisi si articola in **due macro-obiettivi**:
 
 ---
 
-## 🔬 Metodologia
+## Metodologia
 
 ### 1. Pre-processing & Missing Data
 - Analisi esplorativa dei valori mancanti con la libreria `VIM`
@@ -46,7 +46,7 @@ L'analisi si articola in **due macro-obiettivi**:
 ### 4. Trasformazioni (Target Continuo)
 - **Box-Cox** sulla variabile dipendente `sor` → λ ≈ 1.64, trasformazione: ŷ' = ŷ²/2
 - **GAM (Generalized Additive Model)** per valutare le non-linearità → applicazione di trasformazioni **logaritmiche** a `tc`, `cres`, `csor`, `area`, `alt`, `raee`
-- **RESET test** post-trasformazione: p-value = 0.47 ✅ (nessuna misspecificazione)
+- **RESET test** post-trasformazione: p-value = 0.47 (nessuna misspecificazione)
 
 ### 5. Analisi degli Outlier
 - Identificazione tramite **DFFITS** (soglia: 2√p/n)
@@ -65,14 +65,14 @@ L'analisi si articola in **due macro-obiettivi**:
 
 ---
 
-## 📈 Risultati Principali
+## Risultati Principali
 
 ### Modello Lineare (Target: `sor` — Raccolta Differenziata)
 
 | Metrica               | Valore                                              |
 |-----------------------|-----------------------------------------------------|
 | **Trasformazione target** | Box-Cox λ ≈ 1.64 → ŷ' = ŷ²/2              |
-| **RESET test**        | p-value = 0.47 ✅ (forma funzionale corretta)       |
+| **RESET test**        | p-value = 0.47 (forma funzionale corretta)          |
 | **Variabili finali**  | 22 predittori selezionati via stepwise              |
 | **Inferenza robusta** | Errori standard White + Bootstrap 95% CI           |
 
@@ -80,58 +80,50 @@ L'analisi si articola in **due macro-obiettivi**:
 
 ### Modello Logistico (Target: `d_fee` — Tipo di Tariffa)
 
-| Metrica               | Valore        |
-|-----------------------|---------------|
-| **R² McFadden**       | ≈ 0.27        |
-| **Accuratezza**       | **88.3%**     |
-| **Tasso di errore**   | 11.7%         |
-| **Specificity Standard** | 97.9% ✅  |
-| **Sensitivity PAYT**  | 23.6% ⚠️     |
+| Metrica                  | Valore    |
+|--------------------------|-----------|
+| **R² McFadden**          | ≈ 0.27    |
+| **Accuratezza**          | 88.3%     |
+| **Tasso di errore**      | 11.7%     |
+| **Specificity Standard** | 97.9%     |
+| **Sensitivity PAYT**     | 23.6%     |
 
-> Il modello classifica molto bene i comuni con tariffa **standard** (97.9% corretto), ma fatica a identificare i comuni con tariffa **PAYT**, probabilmente per lo sbilanciamento delle classi nel dataset.
+Il modello classifica molto bene i comuni con tariffa **standard** (97.9% corretto), ma fatica a identificare i comuni con tariffa **PAYT**, probabilmente per lo sbilanciamento delle classi nel dataset.
 
 **Interazione chiave**: `sor × alt` — la relazione tra raccolta differenziata e altitudine risulta statisticamente significativa nel determinare il tipo di tariffa.
 
 ---
 
-## 🗂️ Struttura dei File
+## Struttura dei File
 
 ```
-DM/
-├── public_data_waste_fee.csv        # Dataset originale
-├── data_imputed.csv                 # Dataset dopo imputazione MICE (pre-computato)
-├── Script_DM.R                      # Script R principale esplorativo
-├── B1 b Missing e carrellata strumenti corso.R  # Analisi missing data
-├── B3 starting robust model data preparation and checks.R
-├── B5 change target and robust model.R          # Analisi target dicotomico
-├── tesinaDM.Rmd                     # Report completo (sorgente R Markdown)
-├── tesinaDM.docx                    # Report compilato (Word)
-├── tesinaDM.html                    # Report compilato (HTML — apribile nel browser)
-├── logistico.Rmd                    # Analisi approfondita modello logistico
-└── PlotModelloFinale.png            # Visualizzazione del modello finale
+TesinaDM/
+├── public_data_waste_fee.csv   # Dataset originale
+├── tesinaDM.Rmd                # Report completo (sorgente R Markdown)
+└── tesinaDM.docx               # Report compilato (Word)
 ```
 
 ---
 
-## 🛠️ Tecnologie e Librerie R
+## Librerie R Utilizzate
 
-| Libreria      | Utilizzo                                              |
-|---------------|-------------------------------------------------------|
-| `VIM`         | Visualizzazione valori mancanti                       |
-| `mice`        | Imputazione multipla MICE                            |
-| `mctest`      | Calcolo TOL e VIF                                    |
-| `corrgram`    | Matrice di correlazione grafica                      |
-| `MASS`        | Box-Cox transformation                               |
-| `gam`         | Generalized Additive Models                          |
-| `lmtest`      | RESET test, test eteroschedasticità                  |
-| `sandwich`    | Errori standard robusti di White                     |
-| `car`         | Bootstrap, ncvTest, DFFITS                           |
-| `forestmodel` | Forest plot degli Odds Ratio                         |
-| `dplyr`       | Data manipulation                                    |
+| Libreria      | Utilizzo                                    |
+|---------------|---------------------------------------------|
+| `VIM`         | Visualizzazione valori mancanti             |
+| `mice`        | Imputazione multipla MICE                   |
+| `mctest`      | Calcolo TOL e VIF                           |
+| `corrgram`    | Matrice di correlazione grafica             |
+| `MASS`        | Box-Cox transformation                      |
+| `gam`         | Generalized Additive Models                 |
+| `lmtest`      | RESET test, test eteroschedasticità         |
+| `sandwich`    | Errori standard robusti di White            |
+| `car`         | Bootstrap, ncvTest, DFFITS                  |
+| `forestmodel` | Forest plot degli Odds Ratio                |
+| `dplyr`       | Data manipulation                           |
 
 ---
 
-## ▶️ Come Riprodurre l'Analisi
+## Come Riprodurre l'Analisi
 
 1. Clonare il repository e aprire il progetto in **RStudio**
 2. Installare le librerie necessarie:
@@ -140,15 +132,15 @@ DM/
                       "lmtest", "sandwich", "car", "forestmodel", "dplyr",
                       "gvlma", "plyr", "psych"))
    ```
-3. Impostare la working directory sulla cartella `DM/`
+3. Impostare la working directory sulla cartella `TesinaDM/`
 4. Aprire `tesinaDM.Rmd` in RStudio e premere **Knit** per generare il report
 
-> ⚠️ **Nota**: L'imputazione MICE è computazionalmente intensa. Il file `data_imputed.csv` già pre-computato è incluso per saltare questo step.
+> **Nota**: L'imputazione MICE è computazionalmente intensa. Il file `data_imputed.csv` già pre-computato è incluso per saltare questo step.
 
 ---
 
-## 👥 Autori
+## Autori
 
 *Matteo Caruso · Elia Corti · Federico Jarach · Tommaso Zanni*
 
-*Progetto realizzato nell'ambito del corso di **Data Mining** — A.A. 2024/2025*
+*Progetto realizzato nell'ambito del corso di Data Mining — A.A. 2024/2025*
