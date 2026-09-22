@@ -24,6 +24,7 @@ L'analisi ha incluso un confronto sistematico tra **9 algoritmi di Machine Learn
 |-------------------|---------------------------------------------------------------------|
 | **File Training** | `fraudTrain.csv` — ~1.000.000 di transazioni                      |
 | **File Test**     | `fraudTest.csv` — ~500.000 di transazioni                         |
+| **Sample**        | `fraudSample.csv` ✅ — 10 righe di esempio (7 legittime + 3 frodi) incluso nel repo |
 | **Target**        | `is_fraud` — frode (1) vs. legittima (0), variabile binaria        |
 | **Classe di minoranza** | ~0.57% di transazioni fraudolente (dataset fortemente sbilanciato) |
 | **Features chiave** | `amt` (importo), `category` (categoria merceologica), `lat`, `long`, `merch_lat`, `merch_long`, `unix_time`, `city_pop`, `gender` |
