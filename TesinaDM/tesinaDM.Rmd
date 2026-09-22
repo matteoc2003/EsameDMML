@@ -1,0 +1,820 @@
+---
+output: word_document
+---
+
+::: {#Title .illustration style="color:black; text-align: center"}
+# Analisi sullo smaltimento dei rifiuti
+
+### Elaborato Data Mining
+
+*Matteo Caruso*
+
+*Elia Corti*
+
+*Federico Jarach*
+
+*Tommaso Zanni*
+:::
+
+## Analisi target continuo
+
+::: {#Descrizione}
+Il dataset scelto contiene le informazioni relative allo smaltimento dei rifiuti urbani per ogni comune, nello specifico si hanno 4341 osservazioni e 39 variabili. L'obiettivo è quello di costruire un modello robusto che vada a studiare la percentuale di rifiuti raccolti in modo differenziato.
+:::
+
+::: {#Miss}
+### Analisi descrittiva preliminare dei dati
+:::
+
+```{r}
+setwd('/Users/matteocaruso/Desktop/progetto DMML')
+
+b <- read.csv("public_data_waste_fee.csv", sep=","
+              , dec = ".",  
+              stringsAsFactors=TRUE, na.strings=c("NA","NaN", ""))
+summary(b)
+```
+
+```{r}
+b$sea=as.factor(b$sea)
+b$isle=as.factor(b$isle)
+b$d_fee=as.factor(b$d_fee)
+b$geo=as.factor(b$geo)
+
+fit = lm(sor ~ region + tc + cres + csor + istat + area + pop + alt + isle + sea + pden + wden + urb + d_fee + organic + paper + glass + metal + plastic + raee + other + msw_so + msw_un + msw + geo + roads + s_wteregio + s_landfill + gdp + proads + wage , data=b)
+
+
+
+```
+
+::: {#missingness}
+### Missing Data
+
+Come prima operazione si è ritenuto necessario studiare la distribuzione e la frequenza dei valori mancanti, per facilitarne la comprensione si è deciso di utilizzare una rappresentazione grafica.
+:::
+
+```{r}
+sapply(b, function(x)(sum(is.na(x)))) # NA counts
+```
+
+```{r}
+library(VIM)
+missingness<- aggr(b, col=c('navyblue','yellow'),numbers=TRUE, sortVars=TRUE,labels=names(b), cex.axis=.7,gap=2)
+
+```
+
+```{r}
+b <- subset(b, select = - wood)
+b <- subset(b, select = - texile)
+b <- subset(b, select = - province)
+b <- subset(b, select = - sample)
+b <- subset(b, select = - fee)
+b <- subset(b, select = - name)
+b <- subset(b, select = - finance)
+
+#ls(fit)
+#fit$terms
+cov=attr(terms(fit), "term.labels") 
+#cov
+covdata=b[,cov]
+
+sapply(covdata, function(x)(sum(is.na(x)))) # NA counts
+```
+
+### Mice Imputation
+
+Dopo aver verificato che i valori mancanti siano MAR (missing at random) procediamo con l'imputazione solo dove vi è almeno 80% di valori presenti.
+
+```{r}
+#tempData <- mice(covdata, m=1, maxit=20, meth='cart', seed=500)
+
+## take imputed data
+#data_imputed <- complete(tempData,1)
+
+data_imputed <- read.csv("data_imputed.csv", sep=","
+                     , dec = ".",  
+                     stringsAsFactors=TRUE, na.strings=c("NA","NaN", ""))
+
+names(data_imputed)
+sapply(data_imputed, function(x)(sum(is.na(x)))) # NA counts
+
+sapply(covdata, function(x)(sum(is.na(x))))
+##per salvarlo
+#write.csv(data_imputed, "data_imputed.csv", row.names = FALSE)
+
+
+# create dataset for modeling with imputed data
+b=cbind(data_imputed, b$sor)
+names(b)
+str(b)
+names(b)[names(b) == "b$sor"] <- "sor"
+b$sea=as.factor(b$sea)
+b$isle=as.factor(b$isle)
+b$d_fee=as.factor(b$d_fee)
+b$geo=as.factor(b$geo)
+
+
+```
+
+### Collinearità
+
+Ottenuto un dataset pieno e con le giuste variabili si può quindi creare uno **starting model** che, ci restituirà un elevato valore $R^2$ ma con molte variabili non significative e forti problemi di collinearità e eteroschedasticità.
+
+```{r}
+fit = lm(sor ~ region + tc + cres + csor + istat + pop + area + alt + 
+           isle + sea + pden + wden + urb + d_fee + organic + paper + 
+           glass + metal + plastic + raee + other + msw_so + msw_un + 
+           geo + roads  + s_landfill + gdp + proads 
+           + wage   , data=b)
+summary (fit)
+```
+
+```{r}
+par(mfrow=c(2,2))
+plot (fit)
+```
+
+Per analizzare la collinearità delle variabili quantitative si sono utilizzati gli indicatori $VIF$ e $TOL$ per una visualizzazione grafica è stata rappresentata la matrice di correlazione.
+
+```{r, warning=FALSE}
+
+library(dplyr)
+b_numeric <- b[,cov]%>% dplyr::select_if(is.numeric)
+colnames(b_numeric)
+
+b_fac<- b[,cov]%>% dplyr::select_if(is.factor)
+colnames(b_fac)
+
+# 3) see R matrix of correlations of covariates
+require(corrgram)
+corrgram(b_numeric)
+corrgram(b_numeric, lower.panel = panel.cor, cex=1, cex.labels = 1)
+
+# correlaz di tutte le numeriche del dataset
+library(dplyr)
+corrgram(b %>% dplyr::select_if(is.numeric), use = "complete.obs", lower.panel = panel.cor, cex=1, cex.labels = 1)
+
+
+```
+
+### Variabili quantitative
+
+```{r}
+#NUMERICHE 4) see Tol e VIF
+y = as.numeric(b$sor)
+X<-b_numeric
+X=as.matrix(X)
+
+library(mctest)
+#imcdiag(X,y)
+
+m=lm(y~X)
+imcdiag(m)
+#la variabile pop ha un tol inferiore a 0.3 e quindi la eliminiamo 
+#e ricontrolliamo i valori di tol per le altre variabili
+
+b <- subset(b, select = - pop)
+
+#riiteriamo il procedimento
+fit = lm(sor ~ region + tc + cres + csor + istat + area + alt + 
+           isle + sea + pden + wden + urb + d_fee + organic + paper + 
+           glass + metal + plastic + raee + other + msw_so + msw_un + 
+           geo + roads + s_wteregio + s_landfill + gdp + proads 
+           + wage   , data=b)
+
+ls(fit)
+fit$terms
+
+cov=attr(terms(fit), "term.labels") 
+cov
+
+library(dplyr)
+b_numeric <- b[,cov]%>% dplyr::select_if(is.numeric)
+colnames(b_numeric)
+
+b_fac<- b[,cov]%>% dplyr::select_if(is.factor)
+colnames(b_fac)
+
+y = as.numeric(b$sor)
+X<-b_numeric
+X=as.matrix(X)
+
+library(mctest)
+
+
+
+
+m=lm(y~X)
+imcdiag(m)
+
+#la prossima con il tol pi? basso ? wden
+b <- subset(b, select = - wden)
+
+fit = lm(sor ~ region + tc + cres + csor + istat + area + alt + 
+           isle + sea + pden + urb + d_fee + organic + paper + 
+           glass + metal + plastic + raee + other + msw_so + msw_un + 
+           geo + roads + s_wteregio + s_landfill + gdp + proads 
+           + wage   , data=b)
+
+ls(fit)
+fit$terms
+
+cov=attr(terms(fit), "term.labels") 
+cov
+
+library(dplyr)
+b_numeric <- b[,cov]%>% dplyr::select_if(is.numeric)
+colnames(b_numeric)
+
+b_fac<- b[,cov]%>% dplyr::select_if(is.factor)
+colnames(b_fac)
+
+y = as.numeric(b$sor)
+X<-b_numeric
+X=as.matrix(X)
+
+library(mctest)
+
+m=lm(y~X)
+imcdiag(m)
+
+#ora togliamo msw_so
+b <- subset(b, select = - msw_so)
+
+fit = lm(sor ~ region + tc + cres + csor + istat + area + alt + 
+           isle + sea + pden + urb + d_fee + organic + paper + 
+           glass + metal + plastic + raee + other + msw_un + 
+           geo + roads + s_wteregio + s_landfill + gdp + proads 
+           + wage   , data=b)
+
+ls(fit)
+fit$terms
+
+cov=attr(terms(fit), "term.labels") 
+cov
+
+library(dplyr)
+b_numeric <- b[,cov]%>% dplyr::select_if(is.numeric)
+colnames(b_numeric)
+
+b_fac<- b[,cov]%>% dplyr::select_if(is.factor)
+colnames(b_fac)
+
+y = as.numeric(b$sor)
+X<-b_numeric
+X=as.matrix(X)
+
+library(mctest)
+
+m=lm(y~X)
+imcdiag(m)
+```
+
+Tutte le variabili collineari sono state eliminate una per volta in modo iterativo, fino ad ottenere per ogni variabile con $TOL>0.3$ e $VIF<5$.
+
+### Variabili qualitative
+
+Per le variabili qualitative si è utilizzato il coefficiente di connessione $\chi^2_{norm}$.
+
+```{r, warning=FALSE}
+
+b_fac<- b[,cov]%>% dplyr::select_if(is.factor)
+colnames(b_fac)
+
+#### Chi2 normalized: automated with functions ####
+# automation with functions
+
+library(plyr)
+combos <- combn(ncol(b_fac),2)
+adply(combos, 2, function(x) {
+  test <- chisq.test(b_fac[, x[1]], b_fac[, x[2]])
+  tab  <- table(b_fac[, x[1]], b_fac[, x[2]])
+  out <- data.frame("Row" = colnames(b_fac)[x[1]]
+                    , "Column" = colnames(b_fac[x[2]])
+                    , "Chi.Square" = round(test$statistic,3)
+                    , "df"= test$parameter
+                    , "p.value" = round(test$p.value, 3)
+                    , "n" = sum(table(b_fac[,x[1]], b_fac[,x[2]]))
+                    , "u1" =length(unique(b_fac[,x[1]]))-1
+                    , "u2" =length(unique(b_fac[,x[2]]))-1
+                    , "nMinu1u2" =sum(table(b_fac[,x[1]], b_fac[,x[2]]))* min(length(unique(b_fac[,x[1]]))-1 , length(unique(b_fac[,x[2]]))-1) 
+                    , "Chi.Square norm"  =test$statistic/(sum(table(b_fac[,x[1]], b_fac[,x[2]]))* min(length(unique(b_fac[,x[1]]))-1 , length(unique(b_fac[,x[2]]))-1)) 
+  )
+  
+  
+  return(out)
+  
+}) 
+b <- subset(b, select = - region)
+
+```
+
+Le variabili più collineari risultano essere geo e region con $\chi^2_{norm}=0.9588$. Visto che region confronto a geo ha correlazioni maggiori con le altre variabili si è ritenuto più giusto eliminare region.
+
+### Model Selection
+
+Dopo aver verificato l’assenza di multicollinearità (tutti i valori di $\chi^2_{norm}$ inferiori a 0.8 e $TOL$ superiori a 0.3), è stata effettuata una **procedura di selezione del modello stepwise** (`step`, direzione “both”).\
+Tale procedura, basata sul $AIC$, consente di individuare il modello più parsimonioso, eliminando le variabili statisticamente irrilevanti.\
+L’obiettivo è ottenere un modello **più semplice ma informativamente equivalente**, riducendo il rischio di overfitting e migliorando l’interpretabilità dei risultati.
+
+```{r}
+fit=lm(sor~tc+cres+csor+istat+area+alt+isle+sea+pden+urb+
+         d_fee+organic+paper+glass+metal+plastic+raee+other+msw_un+
+         msw+geo+roads+s_wteregio+s_landfill+gdp+proads+wage, data=b)
+
+#step
+selectedMod <- step(fit, direction="both")
+
+fitSTEPPED=lm(sor ~ tc + cres + csor + area + alt + isle + sea + urb + d_fee + 
+         organic + paper + glass + metal + plastic + raee + other + 
+         msw_un + msw + geo + roads + gdp + proads + wage, data=b)
+
+```
+
+```{r}
+summary(fitSTEPPED)
+```
+
+### Linearità per Y
+
+Per valutare e migliorare la linearità della variabile dipendente $y$ (ovvero sor), è stata applicata la **trasformazione di Box-Cox**, al fine di rendere la relazione con le variabili esplicative più aderente ai presupposti della regressione lineare.
+
+```{r}
+library(MASS)
+summary(b$sor)
+
+boxcoxreg1<-boxcox(fitSTEPPED)
+title("Lambda")
+lambda=boxcoxreg1$x[which.max(boxcoxreg1$y)]
+lambda
+```
+
+Il valore $\lambda=1.6363$ci suggerisce di effettuare la seguente trasformazione su $y$:
+
+$$
+\hat{y}'=\hat y^2/2
+$$
+
+È importante sottolineare che nel momento in cui si fa inferenza non si sta più studiando $y$ ma $y'$ quindi per ricavare $y$ si dovrà usare la formula inversa.
+
+```{r}
+fit3=lm(I((sor^2)/2) ~ tc + cres + csor + area + alt + isle + sea + urb + d_fee + 
+          organic + paper + glass + metal + plastic + raee + other + 
+          msw_un + msw + geo + roads + gdp + proads + wage, data=b)
+summary(fit3)
+```
+
+```{r}
+par(mfrow=c(2,2)) 
+plot(fit3)
+```
+
+### Linearità per X
+
+Per migliorare la linearità e la stabilità del modello, alcune **variabili indipendenti (covariate)** sono state sottoposte a **trasformazioni lineari**, in modo da linearizzare il rapporto con la variabile target.
+
+```{r}
+library(gam)
+gam1=gam(I((sor^2)/2) ~ s(tc) + s(cres) + s(csor) + s(area) + s(alt) + (isle) + (sea) + (urb) + (d_fee) + 
+          s(organic) + s(paper) + s(glass) + s(metal) + s(plastic) + s(raee) + s(other) + 
+          s(msw_un) + s(msw) + (geo) + s(roads) + s(gdp) + s(proads) + s(wage), data=b)
+summary(gam1)
+
+anova(fit3,gam1,test='Chisq')
+
+```
+
+Per modellare le relazioni non lineari tra la variabile dipendente sor e le covariate, è stato utilizzato un **modello GAM (Generalized Additive Model)**.\
+Il confronto tramite il **test ANOVA** ha evidenziato che il modello GAM risulta **più efficiente** rispetto alla regressione lineare classica, consentendo una migliore rappresentazione delle eventuali non linearità presenti nei dati.
+
+Successivamente, il modello GAM è stato **rappresentato graficamente** per visualizzare le relazioni tra la variabile dipendente sor e le covariate.\
+Parallelamente, sono state applicate **trasformazioni lineari sulle covariate**, al fine di stabilizzare le relazioni e rendere il modello più interpretabile.
+
+```{r,warning=FALSE}
+# Prima metà dei grafici (1-12)
+par(mfrow = c(3, 4))  # 4 righe x 3 colonne = 12 grafici
+plot(gam1, se = TRUE, select=1:12)  # pages = 1 forza la stampa su un solo "page"
+
+
+
+```
+
+```{r,warning=FALSE}
+# Seconda metà dei grafici (13-24)
+par(mfrow = c(3, 4))  # reset della finestra
+plot(gam1, se = TRUE, select = 13:24)  # plot delle variabili da 13 a 24
+```
+
+Dall’osservazione dei grafici prodotti dal modello GAM, sono emerse relazioni non lineari tra alcune covariate e la variabile dipendente sor.\
+Di conseguenza, sono state applicate **trasformazioni logaritmiche** alle covariate nel modello lineare.\
+Il successivo **RESET test** ha restituito un **p-value pari a 0.4681**, indicando **assenza di specificazione errata del modello** e confermando la bontà della forma funzionale scelta.
+
+```{r}
+fit4=lm(I((sor^2)/2) ~ I(log(tc+1)) + I(log(cres+1)) + I(log(csor+1)) + I(log(area+1)) + I(log(alt+1)) + isle + sea + urb + d_fee + 
+          organic + paper + glass + metal + plastic + I(log(raee+1)) + other + 
+          msw_un + msw + geo + roads + gdp + proads + wage, data=b)
+#modello lineare con coefficienti modellatri in base all'outup gam
+
+library(lmtest)
+resettest(fit4, power = 2, type = "fitted",  data = b)
+```
+
+```{r}
+par(mfrow=c(2,2))
+plot(fit4)
+drop1(fit4, test="F")
+```
+
+### Outlier
+
+Durante la fase di diagnosi del modello, è stata condotta un’analisi dei **outlier** e dei **punti influenti** al fine di individuare eventuali osservazioni anomale che potessero compromettere la stima dei parametri.\
+I punti di leva rappresentano osservazioni con valori anomali nelle covariate, mentre i punti influenti sono quelli che esercitano un impatto significativo sui coefficienti della regressione.\
+L’identificazione e l’eventuale rimozione di tali osservazioni consentono di migliorare la **robustezza** e l’**affidabilità** del modello, garantendo stime più stabili e rappresentative del fenomeno analizzato.
+
+Le osservazioni con valori di **DFFITS** superiori alla soglia convenzionale sono state considerate influenti e, se necessario, rimosse per migliorare la **stabilità** e l’**affidabilità** del modello.
+
+```{r}
+mod<-fit4
+dffits_values <- dffits(mod)
+
+n <- nrow(b)
+p <- length(coefficients(mod))
+threshold <- 2 * sqrt(p / n)
+
+outliers <- which(abs(dffits_values) > threshold)
+cat("Osservazioni outlier (indici):", outliers, "\n")
+
+df_clean <- b[-outliers, ]
+
+mod_clean <- lm(sor ~ I(log(tc+1)) + I(log(cres+1))  + I(log(area+1)) + I(log(alt+1)) + sea + urb + d_fee + 
+                  organic + paper + glass + metal + plastic + I(log(raee+1)) + other + 
+                  msw_un + msw + geo + roads + gdp + proads + wage, data=df_clean)
+summary(mod_clean)
+resettest(mod_clean, power = 2, type = "fitted",  data = df_clean)
+
+```
+
+Si osserva che il **RESET test** del modello stimato a partire dal dataset privo di outlier risulta **sensibilmente peggiore** rispetto a quello ottenuto in precedenza.\
+Tale peggioramento può essere attribuito al fatto che le **trasformazioni lineari** applicate sia alla variabile target sia alle covariate **non risultano più adeguate** al nuovo campione di dati, modificando la struttura delle relazioni originariamente modellate.
+
+### Linearità di Y sul modello senza outlier
+
+A partire dal modello senza outlier si procede nuovamente a creare uno starting model e trasformare la variabile target tramite **Box-Cox**
+
+```{r}
+
+library(MASS)
+mod_clean <- lm(sor ~ tc +cres  + area + alt + sea + urb + d_fee + 
+                  organic + paper + glass + metal + plastic +raee + other + 
+                  msw_un + msw + geo + roads + gdp + proads + wage, data=df_clean)
+
+boxcoxreg1<-boxcox(mod_clean)
+title("Lambda")
+lambda=boxcoxreg1$x[which.max(boxcoxreg1$y)]
+lambda
+```
+
+L'uotput restituito da Box-Cox ci ritorna lo stesso output del modello con gli outlier, quindi si procede a fare la stessa trasformazione.
+
+### Linearità di X sul modello senza outlier
+
+vengono ripetuti gli stessi passaggi di prima.
+
+```{r}
+gam2=gam(I((sor^2)/2) ~ s(tc) + s(cres) + s(csor) + s(area) + s(alt) + (isle) + (sea) + (urb) + (d_fee) + 
+           s(organic) + s(paper) + s(glass) + s(metal) + s(plastic) + s(raee) + s(other) + 
+           s(msw_un) + s(msw) + (geo) + s(roads) + s(gdp) + s(proads) + s(wage), data=df_clean)
+summary(gam2)
+
+```
+
+```{r warning=FALSE}
+par(mfrow = c(3, 4))  # 4 righe x 3 colonne = 12 grafici
+plot(gam2, se = TRUE, select=1:12)  # pages = 1 forza la stampa su un solo "page"
+```
+
+```{r warning =FALSE}
+par(mfrow = c(3, 4))  # 4 righe x 3 colonne = 12 grafici
+plot(gam2, se = TRUE, select=13:24)  # pages = 1 forza la stampa su un solo "page"
+
+```
+
+si procede ora a stimare il nuovo modello con le adeguate trasformazioni e usando il dataset senza outlier.
+
+```{r}
+mod_clean_T <- lm(I((sor^2)/2) ~ I(log(tc+1)) + I(log(cres+1))  + I(log(area+1)) + I(log(alt+1)) + sea + urb + d_fee +  organic + paper + glass + metal + plastic + I(log(raee+1)) + other +  msw_un + msw + geo + roads + gdp + proads + wage, data=df_clean)
+summary(mod_clean_T)
+resettest(mod_clean_T, power = 2, type = "fitted",  data = df_clean)
+
+```
+
+### Conclusioni
+
+Togliendo i punti influenti si nota che il reset test peggiora; quindi si conclude che i punti influenti aiutano il modello ad interpolare al meglio i dati e di conseguenza è giusto stimare il modello utilizzando anche gli outlier.
+
+### Eteroschedasticità
+
+Dopo aver stimato il modello si può dunque procedere a controllare la **varianza** degli errori.
+
+```{r warning=FALSE}
+library(car)
+ncvTest(selectedMod)
+#forte heteroschedasticità
+
+library(gvlma)
+#gvlma(fit4)
+
+
+library(lmtest)
+library(sandwich)
+coeftest(fit4, vcov=vcovHC(fit4))
+
+# plot of predict vs observed
+plot(b$sor , fit4$fitted.values)
+
+#bootstrap
+residual=data.frame(fit4$residuals)
+used=b[row.names(residual),]
+fit_modSel2=selectedMod
+
+
+summary(fit_modSel2)
+library(car)
+BOOT.MOD=Boot(selectedMod, R=1999)
+summary(BOOT.MOD, high.moments=TRUE)
+Confint(BOOT.MOD, level=c(.95),type="perc")
+par(mfrow=c(5,5)) 
+hist(BOOT.MOD, legend="separate")
+Confint(BOOT.MOD, level=c(.95),type="norm") 
+par(mfrow=c(2,2))
+plot(fit_modSel2)
+
+
+```
+
+Tramite ncvTest ai è verificato che la varianza non è costante, ossia non è indipendente dalle covariate.
+
+Per risolvere il problema si è scelto di calcolare **gli errori standard robusti di White**; infine viene eseguita una procedura di **bootstrap** che consente di stimare la distribuzione empirica dei coefficienti e ottenere gli intervalli di confidenza al 95%.
+
+## Analisi target dicotomico
+
+L'obbiettivo è quello di costruire un **modello logistico robusto** utile ad analizzare per ogni comune il tipo di pagamento, si sceglie quindi di analizzare la variabile d_fee, che indica se i comuni hanno un pagamento di tipo PAYT (1) oppure una tipologia standard (0).
+
+### Zero Variance
+
+```{r}
+setwd('/Users/matteocaruso/Desktop/progetto DMML')
+
+dframe <- read.csv("public_data_waste_fee.csv", sep=","
+              , dec = ".",  
+              stringsAsFactors=TRUE, na.strings=c("NA","NaN", ""))
+summary(dframe)
+
+dframe$sea <- as.factor(dframe$sea)
+dframe$geo <- as.factor(dframe$geo)
+dframe$urb <- as.factor(dframe$urb)
+dframe$isle <- as.factor(dframe$isle)
+dframe$d_fee <- as.factor(dframe$d_fee)
+
+library(psych)
+describe(dframe)
+
+data_imputed <- read.csv("data_imputed.csv", sep=","
+                         , dec = ".",  
+                         stringsAsFactors=TRUE, na.strings=c("NA","NaN", ""))
+
+names(data_imputed)
+sapply(data_imputed, function(x)(sum(is.na(x)))) # NA counts
+
+sapply(dframe, function(x)(sum(is.na(x))))
+##per salvarlo
+#write.csv(data_imputed, "data_imputed.csv", row.names = FALSE)
+
+
+# create dataset for modeling with imputed data
+dframe=cbind(data_imputed, dframe$sor)
+names(dframe)
+str(dframe)
+names(dframe)[names(dframe) == "dframe$sor"] <- "sor"
+dframe$sea <- as.factor(dframe$sea)
+dframe$geo <- as.factor(dframe$geo)
+dframe$urb <- as.factor(dframe$urb)
+dframe$isle <- as.factor(dframe$isle)
+dframe$d_fee <- as.factor(dframe$d_fee)
+
+sapply(dframe, function(x)(sum(is.na(x))))
+
+library(psych)
+describe(dframe)
+
+log_imputed <- dframe
+```
+
+```{r}
+table(log_imputed$urb, log_imputed$d_fee)
+```
+
+Guardando la tabella delle frequenze congiunte si potrebbe concludere che più un comune è urbanizzato e maggiore è la tendenza ad avere un pagamento di tipo PAYT.
+
+### Collinearità variabili quantitative
+
+come nel modello lineare bisogna controllare e gestire il fenomeno di collinearità, quindi si analizzano $TOL$ e $VIF$ e in modo iterativo si tolgono le variabili che risultano collineari.
+
+```{r}
+library(dplyr)
+log_numeric <- log_imputed%>% dplyr::select_if(is.numeric)  
+
+colnames(log_numeric)
+```
+
+```{r warning = FALSE}
+require(corrgram)
+corrgram(log_numeric, lower.panel = panel.cor, cex=1, cex.labels = 1)
+```
+
+```{r warning=FALSE}
+y = as.numeric(log_imputed$d_fee) 
+X<-log_numeric
+X=as.matrix(X)
+
+library(mctest)
+m=lm(y~X) 
+imcdiag(m)
+
+which(colnames(X)== 'msw') 
+X <- X[, - c(18)]
+
+m=lm(y~X) 
+imcdiag(m)
+
+which(colnames(X)== 'pop') 
+X <- X[, - c(5)]
+
+m=lm(y~X) 
+imcdiag(m)
+
+which(colnames(X)== 'wden') 
+X <- X[, - c(7)]
+
+m=lm(y~X) 
+imcdiag(m)
+
+which(colnames(X)== 'msw_so') 
+X <- X[, - c(14)]
+
+m=lm(y~X) 
+imcdiag(m)
+
+```
+
+### Collinearità variabili qualitative
+
+Per gestire la collinearità delle variabili qualitative è stato studiato il coefficiente di connessione $\chi^2_{norm}$.
+
+```{r, warning=FALSE}
+l_factor <- log_imputed%>% dplyr::select_if(is.factor) # seleziono cov. fattoriali
+
+library(plyr)
+combos <- combn(ncol(l_factor),2)
+adply(combos, 2, function(x) {
+  test <- chisq.test(l_factor[, x[1]], l_factor[, x[2]])
+  tab  <- table(l_factor[, x[1]], l_factor[, x[2]])
+  out <- data.frame("Row" = colnames(l_factor)[x[1]]
+                    , "Column" = colnames(l_factor[x[2]])
+                    , "Chi.Square" = round(test$statistic,3)
+                    , "df"= test$parameter
+                    , "p.value" = round(test$p.value, 3)
+                    , "n" = sum(table(l_factor[,x[1]], l_factor[,x[2]]))
+                    , "u1" =length(unique(l_factor[,x[1]]))-1
+                    , "u2" =length(unique(l_factor[,x[2]]))-1
+                    , "nMinu1u2" =sum(table(l_factor[,x[1]], l_factor[,x[2]]))* min(length(unique(l_factor[,x[1]]))-1 , length(unique(l_factor[,x[2]]))-1) 
+                    , "Chi.Square norm"  =test$statistic/(sum(table(l_factor[,x[1]], l_factor[,x[2]]))* min(length(unique(l_factor[,x[1]]))-1 , length(unique(l_factor[,x[2]]))-1)) 
+  )
+  
+  
+  return(out)
+  
+}) 
+
+```
+
+Si può notare che le variabili geo e region hanno un $\chi^2_{norm}$ pari a 0.9588 quindi risultano altamente connesse; si è ritenuto quindi corretto rimuovere 'geo'.
+
+```{r warning=FALSE}
+which(colnames(log_imputed)== 'msw')
+which(colnames(log_imputed)== 'pop')
+which(colnames(log_imputed)== 'wden')
+which(colnames(log_imputed)== 'msw_so')
+which(colnames(log_imputed)== 'geo')
+
+l_nuovo<-log_imputed [,-c(24,7,12,22,25)]
+
+Log2 = glm(d_fee ~ alt+
+             pden+ urb  + organic +plastic+ paper + glass +
+             metal + raee + other + msw_un  + sor
+           + gdp + proads + wage , data=l_nuovo, family = binomial)
+summary(Log2)
+```
+
+### Iterazioni tra variabili categoriali
+
+```{r warning=FALSE}
+drop1(Log2, .~., test="F")
+
+Log2 = glm(d_fee ~ alt+
+             pden+ urb  + organic +plastic+ paper + glass +
+             metal + raee + other + msw_un  + sor
+           + gdp + proads + wage + sor*alt, data=l_nuovo, family = binomial)
+summary(Log2)
+```
+
+L'iterazione tra le variabili 'sor' e 'alt' risulta altamente **significativa** quindi si procede ad effettuare Model Selection partendo dal modello con l'iterazione.
+
+### Model selection
+
+```{r warning=FALSE}
+library(MASS)
+selectedMod <- step(Log2, direction="both")
+
+which(colnames(l_nuovo)== 'organic')
+which(colnames(l_nuovo)== 'gdp')
+which(colnames(l_nuovo)== 'msw_un')
+
+
+
+Log2 = glm(d_fee ~ alt+
+             pden+ urb  + plastic+ paper + glass +
+             metal + raee + other  + sor
+           + proads + wage + sor*alt, data=l_nuovo, family = binomial)
+summary(Log2)
+```
+
+Come nel modello lineare si è effettuata una model selection com metodo 'both'. Sono quindi state tolte le variabili:
+
+-   pop
+
+-   wden
+
+-   organic
+
+-   msw
+
+-   gdp
+
+### Odds Ratio
+
+```{r warning=FALSE}
+library(forestmodel)
+print(forest_model(Log2),text_size = 5)
+
+library(ggplot2)
+ggplot(l_nuovo, aes(x=wage, colour=d_fee, fill=d_fee)) + geom_density(alpha=0.7)
+
+t<-exp(cbind(OR=coef(Log2), confint(Log2)))
+t
+```
+
+In questo plot osserviamo gli Odds Ratio associati a ciascuna variabile indipendente L’Odds Ratio indica quanto cambia la propensione al verificarsi dell’evento al variare della covariata di riferimento Oltre al valore dell’Odds Ratio va valutato il p-value associato e il corrispettivo intervallo di confidenza, che indica la significatività dell’associazione.
+
+### R\^2
+
+```{r}
+null = glm(d_fee ~ 1, data=l_nuovo,family = binomial)
+summary(null)
+
+R2=1-(Log2$deviance/null$deviance)
+R2
+
+```
+
+$R^2$ è l’indice che misura l’adattamento del modello ai dati. Nel modello preso in considerazione l’$R^2$ è moderatamente basso, pari all’incirca a 0.27.
+
+### Probabilità ridotte
+
+```{r}
+predicted_p <- predict(Log2, l_nuovo, type="response") 
+
+l_pred=cbind(l_nuovo, predicted_p)
+
+l_pred$predicted_y <- ifelse(l_pred$predicted_p > 0.5,1,0)
+
+t=table(observed=l_pred$d_fee, predicted=l_pred$predicted_y);t
+
+79/(3705+79)
+427/(427+130)
+t2<-t/sum(t)
+```
+
+Si osserva che per quanto riguarda l'individuazione di comuni con un tipo di pagamento STANDARD il modello ha una buona bontà di predizione in quanto solamente 2.09% dei comuni con un sistema STANDARD vengono misclassificati come PAYT, quindi per quanto riguarda l'individuazione di comuni con STANDARD ha una buona bontà predittiva.
+
+### Accuratezza
+
+```{r}
+###ACCURATEZZA###
+acc=t2[1,1]+t2[2,2]; acc
+
+###TASSO D'ERRORE###
+1-acc
+```
+
+Per quanto riguarda l'individuazione di comuni con pagamento PAYT, il modello non riesce a classificare correttamente il 76.4% dei dati, di conseguenza si può dire che per quanto riguarda il PAYT il modello non ha una buona capacità predittiva. Nonostante l’alta missclassificazione per il metodo di pagamento PAYT, il modello ha comunque una buona accuratezza pari all’88,3%, e di conseguenza un tasso di errore del 11.7% circa

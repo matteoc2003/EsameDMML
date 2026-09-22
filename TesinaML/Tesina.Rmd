@@ -1,0 +1,978 @@
+---
+title: "tesina Fraud detect"
+output: html_notebook
+---
+
+::: {#Title .illustration style="color:black; text-align: center"}
+# Fraud Detection
+
+# Elaborato Machine Learning
+
+*Matteo Caruso*
+
+*Elia Corti*
+
+*Federico Jarach*
+
+*Tommaso Zanni*
+:::
+
+## Introduzione
+
+I dataset scelti contengono informazioni relative a transazioni bancarie, nello specifico si hanno 2 dataset:
+
+-   FraudTrain.csv (\~1 mln di osservazioni)
+
+-   FraudTest.csv (\~500 mila osservazioni)
+
+Lo scopo è quello di creare un modello che riesca a classificare correttamente le singole osservazioni secondo la variabile target 'is_fraud' .
+
+## Analisi descrittive
+
+Come prima operazione si è guardata la distribuzione della variabile target per valutare un eventuale bilanciamento.
+
+```{r}
+setwd('/Users/matteocaruso/Desktop/progetto DMML/ML')
+dataTrain=read.csv('fraudTrain.csv')
+dataTest=read.csv('fraudTest.csv')
+print('Statistiche descrittive:')
+str(dataTrain)
+
+print('Distribuzione assoluta Target:')
+table (dataTrain$is_fraud)
+
+print('Distribuzione relativa Target:')
+round(prop.table(table(dataTrain$is_fraud)), 3)
+```
+
+## Bilanciamento
+
+Come si nota dagli output il dataset è molto sbilanciato, questo fa intuire che non sia già stato pre processato, si procede quindi a bilanciare il dataset ottenendo quindi 200 mila osservazioni di cui il 30% con 'is_fraud'=1.
+
+```{r}
+library (ROSE)
+cols_utili <- c("category", "amt", "gender", "lat", "long", 
+                "city_pop", "unix_time", "merch_lat", "merch_long", "is_fraud")
+
+data_clean <- dataTrain[, cols_utili]
+data_clean2 <- dataTest[, cols_utili]
+# 2. CONVERSIONE IN FACTOR
+# Fondamentale: is_fraud e le variabili testuali rimaste devono essere factor
+data_clean$is_fraud <- as.factor(data_clean$is_fraud)
+data_clean$category <- as.factor(data_clean$category)
+data_clean$gender <- as.factor(data_clean$gender)
+
+data_clean2$is_fraud <- as.factor(data_clean2$is_fraud)
+data_clean2$category <- as.factor(data_clean2$category)
+data_clean2$gender <- as.factor(data_clean2$gender)
+
+# 3. APPLICAZIONE DI ROSE
+set.seed(123)
+data_balanced <- ROSE(is_fraud ~ ., data = data_clean, seed = 123)$data
+
+
+
+# 4. ESEMPIO CON OVUN.SAMPLE (30% Frodi)
+# Anche qui usiamo il dataset pulito
+set.seed(123)
+data_semi_train <- ovun.sample(is_fraud ~ ., 
+                         data = data_clean, 
+                         method = "both",
+                         p = 0.3, 
+                         N = 5000, 
+                         seed = 123)$data
+
+set.seed(123)
+data_semi_test <- ovun.sample(is_fraud ~ ., 
+                         data = data_clean2, 
+                         method = "both",
+                         p = 0.3, 
+                         N = 3000, 
+                         seed = 123)$data
+
+# Controllo distribuzione finale
+cat("Distribuzione assoluta 'is_fraud' bilanciata:")
+table(data_semi_train$is_fraud)
+cat("Distribuzione relativa 'is_fraud' bilanciata:")
+round(prop.table(table(data_semi_train$is_fraud)), 3)
+```
+
+## Zero-Variance
+
+```{r}
+library(car)
+library(caret)
+nzv = nearZeroVar(data_semi_train, saveMetrics = TRUE)
+nzv 
+```
+
+## Model Selection con Albero
+
+```{r}
+set.seed(1)
+
+cvCtrl <- trainControl(
+  method = "cv",
+  number = 5,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary
+)
+
+data_semi_train$is_fraud <- factor(
+  data_semi_train$is_fraud,
+  levels = c("0", "1"),
+  labels = c("no_fraud", "fraud")
+)
+
+treeTune <- train(
+  is_fraud ~ .,
+  data = data_semi_train,
+  method = "rpart",
+  metric = "ROC",
+  tuneLength = 3,
+  trControl = cvCtrl
+)
+
+treeTune
+```
+
+```{r}
+vimp=varImp(treeTune)
+plot(varImp(object=treeTune),main="Tree - Variable Importance")
+
+vimp=data.frame(vimp[1])
+vimp$var=row.names(vimp)
+
+vimp2=vimp[vimp$Overall>0,]
+
+cols_to_keep <- c("amt", "category", "is_fraud","unix_time")
+
+df_subset <- data_semi_train[, cols_to_keep]
+
+dataTestSubset=dataTest[,cols_to_keep]
+```
+
+L'albero indica che le variabili più importanti sono: 'amt' e 'category' si procede quindi ad osservare le differenze di 'amt' tra le osservazioni 'is_fraud'=0 e 'is_fraud'=1
+
+```{r}
+library(dplyr)
+data_semi_train %>% 
+  group_by(is_fraud) %>% 
+  summarise(
+    Mean_Amt = mean(amt),
+    Median_Amt = median(amt),
+    Max_Amt = max(amt),
+    Count = n()
+  ) %>% 
+  print()
+```
+
+Si nota che le transazioni fraudolente hanno importi con media e mediana molto più alte confronto alle transazioni lecite, tuttavia le frodi non raggiungono gli stessi picchi massimi delle transazioni legittime.\
+Ciò suggerisce che i truffatori operino in una fascia di importo specifica evitando importi eccessivamente alti.
+
+```{r}
+ggplot(data_semi_train, aes(x = is_fraud, y = amt, fill = is_fraud)) +
+  geom_boxplot() +
+  scale_y_log10() +  # Applica la scala logaritmica all'asse Y
+  theme_minimal() +
+  labs(title = "Distribuzione Importi (Scala Logaritmica)",
+       x = "is_fraud",
+       y = "amt (Log10)")
+```
+
+Si procede ora a fare la stessa operazione per la variabile 'category' anch'essa ritenuta importante dall'albero
+
+```{r}
+ggplot(data_semi_train, aes(x = reorder(category, amt, FUN = median), y = amt, fill = is_fraud)) +
+  geom_boxplot() +
+  coord_flip() +
+  scale_y_log10() + 
+  labs(title = "Importi per Categoria: Frodi vs Leciti",
+       x = "Category",
+       y = "amt",
+       fill = "is_fraud") +
+  theme_minimal()
+```
+
+## GLM
+
+```{r}
+library(pROC)
+
+# --- 1. PREPARAZIONE DATI ---
+# Assicuriamoci che la variabile target sia un fattore
+df_subset$is_fraud      <- as.factor(df_subset$is_fraud)
+data_semi_test$is_fraud <- as.factor(data_semi_test$is_fraud)
+
+cat("--- AVVIO ADDESTRAMENTO MODELLO GLM ---\n")
+
+# --- 2. ADDESTRAMENTO (TRAINING) ---
+model_glm <- glm(is_fraud ~ ., data = df_subset, family = "binomial")
+
+cat("Modello addestrato. Calcolo curve ROC...\n")
+
+# --- 3. PREDIZIONE PROBABILITÀ ---
+# type = "response" restituisce valori tra 0 e 1
+prob_train <- predict(model_glm, newdata = df_subset, type = "response")
+prob_test  <- predict(model_glm, newdata = data_semi_test,  type = "response")
+
+# --- 4. CREAZIONE OGGETTI ROC ---
+# Calcoliamo le due curve separatamente
+roc_train <- roc(response = df_subset$is_fraud,      predictor = prob_train)
+roc_test  <- roc(response = data_semi_test$is_fraud, predictor = prob_test)
+
+# Calcoliamo le AUC per scriverle nella legenda
+auc_train <- auc(roc_train)
+auc_test  <- auc(roc_test)
+
+# --- 5. GRAFICO UNICO (Train + Test) ---
+
+# A. Disegniamo la curva del TRAINING (Blu)
+plot(roc_train, 
+     col = "blue", 
+     lwd = 2, 
+     main = "Confronto ROC: Training vs Test",
+     legacy.axes = TRUE) # Mette "1-Specificity" sull'asse X
+
+# B. Aggiungiamo la curva del TEST (Rosso)
+plot(roc_test, 
+     col = "red", 
+     lwd = 2, 
+     add = TRUE) # 'add = TRUE' sovrappone al grafico esistente
+
+# C. Aggiungiamo la Legenda
+legend("bottomright", 
+       legend = c(paste("Train (AUC =", round(auc_train, 4), ")"),
+                  paste("Test  (AUC =", round(auc_test, 4), ")")),
+       col = c("blue", "red"),
+       lwd = 2)
+```
+
+Il modello risulta solido, tuttavia ha una classificazione errata degli eventi fraudolenti, nello specifico delle transazioni classificate fraudolente solo 1 su 7 lo è veramente.
+
+Il confronto tra gli errori evidenzia un comportamento atipico ma positivo: l'ASE sul Test Set (0.039) risulta inferiore a quello sul Training Set (0.090). Questo fenomeno suggerisce che il modello non soffre di **overfitting**. La discrepanza è verosimilmente attribuibile alla diversa distribuzione delle classi tra i due dataset: il Test Set, riflettendo la reale incidenza delle frodi (molto bassa), premia la tendenza conservativa del modello, abbassando l'errore quadratico medio globale.
+
+## Naive Bayes
+
+```{r}
+library(e1071) # Fondamentale per naiveBayes
+library(pROC)
+
+# --- 1. ADDESTRAMENTO ---
+# Assicurati che il target sia un fattore
+data_semi_train$is_fraud <- as.factor(data_semi_train$is_fraud)
+data_semi_test$is_fraud  <- as.factor(data_semi_test$is_fraud)
+
+cat("--- AVVIO ADDESTRAMENTO NAIVE BAYES ---\n")
+model_nb <- naiveBayes(is_fraud ~ ., data = data_semi_train)
+
+
+# --- 2. PREDIZIONE PROBABILITÀ (TRAIN & TEST) ---
+# type = "raw" restituisce una MATRICE (colonna 0 e colonna 1)
+raw_pred_train <- predict(model_nb, newdata = data_semi_train, type = "raw")
+raw_pred_test  <- predict(model_nb, newdata = data_semi_test,  type = "raw")
+
+# Identifichiamo la colonna della classe positiva (es. "1" o "fraud")
+# Prendiamo la seconda colonna (solitamente è quella dell'evento target)
+col_positiva <- colnames(raw_pred_test)[2] 
+
+# Estraiamo i vettori di probabilità
+prob_train <- raw_pred_train[, col_positiva]
+prob_test  <- raw_pred_test[, col_positiva]
+
+cat("Colonna probabilità utilizzata:", col_positiva, "\n")
+
+
+# --- 3. CREAZIONE CURVE ROC ---
+roc_train <- roc(response = data_semi_train$is_fraud, predictor = prob_train)
+roc_test  <- roc(response = data_semi_test$is_fraud,  predictor = prob_test)
+
+# Calcolo AUC
+auc_train <- auc(roc_train)
+auc_test  <- auc(roc_test)
+
+
+# --- 4. GRAFICO UNICO (Train + Test) ---
+
+# A. Curva TRAINING (Blu)
+plot(roc_train, 
+     col = "blue", 
+     lwd = 2, 
+     main = "ROC Naive Bayes: Training vs Test",
+     legacy.axes = TRUE)
+
+# B. Curva TEST (Rosso)
+plot(roc_test, 
+     col = "red", 
+     lwd = 2, 
+     add = TRUE) # Sovrappone al grafico precedente
+
+# C. Legenda
+legend("bottomright", 
+       legend = c(paste("Train (AUC =", round(auc_train, 4), ")"),
+                  paste("Test  (AUC =", round(auc_test, 4), ")")),
+       col = c("blue", "red"),
+       lwd = 2)
+
+cat("\nGAP AUC (Train - Test):", round(auc_train - auc_test, 5), "\n")
+```
+
+Sebbene il modello sia robusto (no overfitting), le prestazioni operative sono inferiori alla Regressione Logistica. Il Naive Bayes genera circa **4.600 falsi allarmi in più** rispetto al GLM (15.430 vs 10.848) pur catturando meno frodi (1.503 vs 1.551).
+
+## Lasso
+
+```{r}
+library(glmnet) # Libreria per LASSO/Ridge
+library(pROC)
+
+# --- 1. PREPARAZIONE DATI (MATRICI) ---
+# glmnet richiede matrici, non dataframe. 
+# model.matrix converte i fattori in dummy variables e rimuove l'intercetta ([,-1])
+
+# A. Training Set
+x_train_mat <- model.matrix(is_fraud ~ ., data = data_semi_train)[, -1]
+y_train     <- data_semi_train$is_fraud
+
+# B. Test Set
+x_test_mat  <- model.matrix(is_fraud ~ ., data = data_semi_test)[, -1]
+y_test      <- data_semi_test$is_fraud
+
+cat("--- AVVIO ADDESTRAMENTO LASSO (Cross-Validation) ---\n")
+
+# --- 2. ADDESTRAMENTO (TRAINING CON CV) ---
+# alpha = 1 -> LASSO (se fosse 0 sarebbe Ridge)
+# family = "binomial" -> Regressione Logistica
+cv_lasso <- cv.glmnet(x_train_mat, y_train, alpha = 1, family = "binomial")
+
+# Troviamo il lambda ottimale
+best_lambda <- cv_lasso$lambda.min
+cat("Miglior Lambda trovato:", best_lambda, "\n")
+cat("Calcolo curve ROC...\n")
+
+# --- 3. PREDIZIONE PROBABILITÀ ---
+# s = "lambda.min" usa il modello con il lambda ottimale
+# type = "response" restituisce probabilità
+prob_train <- predict(cv_lasso, newx = x_train_mat, s = "lambda.min", type = "response")
+prob_test  <- predict(cv_lasso, newx = x_test_mat,  s = "lambda.min", type = "response")
+
+# Convertiamo in vettori semplici (glmnet restituisce matrici a 1 colonna)
+prob_train <- as.vector(prob_train)
+prob_test  <- as.vector(prob_test)
+
+
+# --- 4. CREAZIONE CURVE ROC ---
+roc_train <- roc(response = y_train, predictor = prob_train)
+roc_test  <- roc(response = y_test,  predictor = prob_test)
+
+# Calcolo AUC
+auc_train <- auc(roc_train)
+auc_test  <- auc(roc_test)
+
+
+# --- 5. GRAFICO UNICO (Train + Test) ---
+
+# A. Curva TRAINING (Blu)
+plot(roc_train, 
+     col = "blue", 
+     lwd = 2, 
+     main = "ROC LASSO Regression: Training vs Test",
+     legacy.axes = TRUE)
+
+# B. Curva TEST (Rosso)
+plot(roc_test, 
+     col = "red", 
+     lwd = 2, 
+     add = TRUE)
+
+# C. Legenda
+legend("bottomright", 
+       legend = c(paste("Train (AUC =", round(auc_train, 4), ")"),
+                  paste("Test  (AUC =", round(auc_test, 4), ")")),
+       col = c("blue", "red"),
+       lwd = 2)
+
+cat("\nGAP AUC (Train - Test):", round(auc_train - auc_test, 5), "\n")
+```
+
+## KNN
+
+```{r}
+library(caret) # Fondamentale per knn3 e preProcess
+library(pROC)
+
+# --- 1. PREPROCESSING (Normalizzazione) ---
+# Il KNN richiede che tutte le variabili siano sulla stessa scala.
+# Calcoliamo i parametri di scala (media e dev. standard) SOLO sul training
+norm_values <- preProcess(df_subset, method = c("center", "scale"))
+
+# Applichiamo la normalizzazione a Train e Test
+train_norm <- predict(norm_values, df_subset)
+test_norm  <- predict(norm_values, data_semi_test)
+
+# Assicuriamoci che il target rimanga un fattore
+train_norm$is_fraud <- as.factor(train_norm$is_fraud)
+test_norm$is_fraud  <- as.factor(test_norm$is_fraud)
+
+cat("--- AVVIO ADDESTRAMENTO KNN (k=5) ---\n")
+
+# --- 2. ADDESTRAMENTO ---
+# Usiamo k=5 come standard di partenza (puoi modificarlo)
+model_knn <- knn3(is_fraud ~ ., data = train_norm, k = 10)
+
+cat("Modello addestrato. Calcolo curve ROC...\n")
+
+
+# --- 3. PREDIZIONE PROBABILITÀ ---
+# type = "prob" restituisce una matrice (come Naive Bayes)
+# Colonna 1 = Prob classe 0, Colonna 2 = Prob classe 1
+pred_prob_train <- predict(model_knn, newdata = train_norm, type = "prob")
+pred_prob_test  <- predict(model_knn, newdata = test_norm,  type = "prob")
+
+# Selezioniamo la colonna della classe positiva (la seconda)
+col_positiva <- colnames(pred_prob_test)[2]
+prob_train   <- pred_prob_train[, col_positiva]
+prob_test    <- pred_prob_test[, col_positiva]
+
+cat("Colonna probabilità utilizzata:", col_positiva, "\n")
+
+
+# --- 4. CREAZIONE CURVE ROC ---
+roc_train <- roc(response = train_norm$is_fraud, predictor = prob_train)
+roc_test  <- roc(response = test_norm$is_fraud,  predictor = prob_test)
+
+# Calcolo AUC
+auc_train <- auc(roc_train)
+auc_test  <- auc(roc_test)
+
+
+# --- 5. GRAFICO UNICO (Train + Test) ---
+
+# A. Curva TRAINING (Blu)
+plot(roc_train, 
+     col = "blue", 
+     lwd = 2, 
+     main = "ROC KNN (k=10): Training vs Test",
+     legacy.axes = TRUE)
+
+# B. Curva TEST (Rosso)
+plot(roc_test, 
+     col = "red", 
+     lwd = 2, 
+     add = TRUE)
+
+# C. Legenda
+legend("bottomright", 
+       legend = c(paste("Train (AUC =", round(auc_train, 4), ")"),
+                  paste("Test  (AUC =", round(auc_test, 4), ")")),
+       col = c("blue", "red"),
+       lwd = 2)
+
+cat("\nGAP AUC (Train - Test):", round(auc_train - auc_test, 5), "\n")
+```
+
+## Tree
+
+```{r}
+library(rpart)  # Libreria standard per alberi decisionali
+library(pROC)
+
+# --- 1. PREPARAZIONE DATI ---
+# Assicuriamoci che il target sia un fattore
+data_semi_train$is_fraud <- as.factor(data_semi_train$is_fraud)
+data_semi_test$is_fraud  <- as.factor(data_semi_test$is_fraud)
+
+cat("--- AVVIO ADDESTRAMENTO ALBERO DECISIONALE ---\n")
+
+# --- 2. ADDESTRAMENTO ---
+# method = "class" specifica che è un albero di classificazione (non regressione)
+model_tree <- rpart(is_fraud ~ ., data = data_semi_train, method = "class")
+
+cat("Modello addestrato. Calcolo predizioni...\n")
+
+
+# --- 3. PREDIZIONE PROBABILITÀ ---
+# type = "prob" restituisce una matrice (come Naive Bayes/KNN)
+# Colonna 1 = Prob classe 0, Colonna 2 = Prob classe 1
+pred_prob_train <- predict(model_tree, newdata = data_semi_train, type = "prob")
+pred_prob_test  <- predict(model_tree, newdata = data_semi_test,  type = "prob")
+
+# Selezioniamo la colonna della classe positiva (la seconda, es. "1" o "fraud")
+col_positiva <- colnames(pred_prob_test)[2]
+prob_train   <- pred_prob_train[, col_positiva]
+prob_test    <- pred_prob_test[, col_positiva]
+
+cat("Colonna probabilità utilizzata:", col_positiva, "\n")
+
+
+# --- 4. CREAZIONE CURVE ROC ---
+roc_train <- roc(response = data_semi_train$is_fraud, predictor = prob_train)
+roc_test  <- roc(response = data_semi_test$is_fraud,  predictor = prob_test)
+
+# Calcolo AUC
+auc_train <- auc(roc_train)
+auc_test  <- auc(roc_test)
+
+
+# --- 5. GRAFICO UNICO (Train + Test) ---
+
+# A. Curva TRAINING (Blu)
+plot(roc_train, 
+     col = "blue", 
+     lwd = 2, 
+     main = "ROC Decision Tree: Training vs Test",
+     legacy.axes = TRUE)
+
+# B. Curva TEST (Rosso)
+plot(roc_test, 
+     col = "red", 
+     lwd = 2, 
+     add = TRUE)
+
+# C. Legenda
+legend("bottomright", 
+       legend = c(paste("Train (AUC =", round(auc_train, 4), ")"),
+                  paste("Test  (AUC =", round(auc_test, 4), ")")),
+       col = c("blue", "red"),
+       lwd = 2)
+
+cat("\nGAP AUC (Train - Test):", round(auc_train - auc_test, 5), "\n")
+```
+
+## Random Forest
+
+```{r}
+library(randomForest) # Libreria standard
+library(pROC)
+
+# --- 1. PREPARAZIONE DATI ---
+# Random Forest richiede ASSOLUTAMENTE che il target sia un fattore
+data_semi_train$is_fraud <- as.factor(data_semi_train$is_fraud)
+data_semi_test$is_fraud  <- as.factor(data_semi_test$is_fraud)
+
+cat("--- AVVIO ADDESTRAMENTO RANDOM FOREST ---\n")
+cat("(Questo passaggio può richiedere più tempo rispetto agli altri modelli...)\n")
+
+# --- 2. ADDESTRAMENTO ---
+# ntree = 500 è il default, puoi ridurlo (es. 100) se è troppo lento
+model_rf <- randomForest(is_fraud ~ ., data = data_semi_train, ntree = 100)
+
+cat("Modello addestrato. Calcolo predizioni...\n")
+
+
+# --- 3. PREDIZIONE PROBABILITÀ ---
+# type = "prob" restituisce una matrice (Col 1: classe 0, Col 2: classe 1)
+pred_prob_train <- predict(model_rf, newdata = data_semi_train, type = "prob")
+pred_prob_test  <- predict(model_rf, newdata = data_semi_test,  type = "prob")
+
+# Selezioniamo la colonna della classe positiva (la seconda)
+col_positiva <- colnames(pred_prob_test)[2]
+prob_train   <- pred_prob_train[, col_positiva]
+prob_test    <- pred_prob_test[, col_positiva]
+
+cat("Colonna probabilità utilizzata:", col_positiva, "\n")
+
+
+# --- 4. CREAZIONE CURVE ROC ---
+roc_train <- roc(response = data_semi_train$is_fraud, predictor = prob_train)
+roc_test  <- roc(response = data_semi_test$is_fraud,  predictor = prob_test)
+
+# Calcolo AUC
+auc_train <- auc(roc_train)
+auc_test  <- auc(roc_test)
+
+
+# --- 5. GRAFICO UNICO (Train + Test) ---
+
+# A. Curva TRAINING (Blu)
+plot(roc_train, 
+     col = "blue", 
+     lwd = 2, 
+     main = "ROC Random Forest: Training vs Test",
+     legacy.axes = TRUE)
+
+# B. Curva TEST (Rosso)
+plot(roc_test, 
+     col = "red", 
+     lwd = 2, 
+     add = TRUE)
+
+# C. Legenda
+legend("bottomright", 
+       legend = c(paste("Train (AUC =", round(auc_train, 4), ")"),
+                  paste("Test  (AUC =", round(auc_test, 4), ")")),
+       col = c("blue", "red"),
+       lwd = 2)
+
+cat("\nGAP AUC (Train - Test):", round(auc_train - auc_test, 5), "\n")
+```
+
+## Gradient Boost
+
+```{r}
+library(gbm)  # Libreria per Gradient Boosting Machine
+library(pROC)
+
+# --- 1. PREPARAZIONE DATI (Conversioni specifiche per GBM) ---
+# Il GBM con distribuzione "bernoulli" VUOLE il target come 0 e 1.
+# Convertiamo i fattori in numeri: as.numeric restituisce 1 e 2, quindi sottraiamo 1 per avere 0 e 1.
+
+# Creiamo copie temporanee per non "sporcare" i dataset originali
+train_gbm <- data_semi_train
+test_gbm  <- data_semi_test
+
+train_gbm$is_fraud <- as.numeric(as.factor(train_gbm$is_fraud)) - 1
+test_gbm$is_fraud  <- as.numeric(as.factor(test_gbm$is_fraud)) - 1
+
+cat("--- AVVIO ADDESTRAMENTO GRADIENT BOOSTING ---\n")
+
+# --- 2. ADDESTRAMENTO ---
+# distribution = "bernoulli" -> Per classificazione binaria (logistica)
+# n.trees = 100 -> Numero di iterazioni (alberi)
+# interaction.depth = 3 -> Profondità degli alberi (complessità)
+model_boost <- gbm(is_fraud ~ ., 
+                   data = train_gbm, 
+                   distribution = "bernoulli", 
+                   n.trees = 100, 
+                   interaction.depth = 3,
+                   shrinkage = 0.1,  # Tasso di apprendimento
+                   verbose = FALSE)
+
+cat("Modello addestrato. Calcolo predizioni...\n")
+
+
+# --- 3. PREDIZIONE PROBABILITÀ ---
+# In gbm bisogna specificare 'n.trees' anche nella predict
+# type = "response" restituisce direttamente le probabilità (vettore unico)
+prob_train <- predict(model_boost, newdata = train_gbm, n.trees = 100, type = "response")
+prob_test  <- predict(model_boost, newdata = test_gbm,  n.trees = 100, type = "response")
+
+# GBM restituisce un vettore semplice (non una matrice), quindi è già pronto
+cat("Calcolo curve ROC completato.\n")
+
+
+# --- 4. CREAZIONE CURVE ROC ---
+# Usiamo i target convertiti (0/1) per il confronto
+roc_train <- roc(response = train_gbm$is_fraud, predictor = prob_train)
+roc_test  <- roc(response = test_gbm$is_fraud,  predictor = prob_test)
+
+# Calcolo AUC
+auc_train <- auc(roc_train)
+auc_test  <- auc(roc_test)
+
+
+# --- 5. GRAFICO UNICO (Train + Test) ---
+
+# A. Curva TRAINING (Blu)
+plot(roc_train, 
+     col = "blue", 
+     lwd = 2, 
+     main = "ROC Gradient Boosting: Training vs Test",
+     legacy.axes = TRUE)
+
+# B. Curva TEST (Rosso)
+plot(roc_test, 
+     col = "red", 
+     lwd = 2, 
+     add = TRUE)
+
+# C. Legenda
+legend("bottomright", 
+       legend = c(paste("Train (AUC =", round(auc_train, 4), ")"),
+                  paste("Test  (AUC =", round(auc_test, 4), ")")),
+       col = c("blue", "red"),
+       lwd = 2)
+
+cat("\nGAP AUC (Train - Test):", round(auc_train - auc_test, 5), "\n")
+```
+
+## PLS
+
+```{r}
+library(caret) # Gestisce PLS e Preprocessing
+library(pls)   # Engine sottostante
+library(pROC)
+
+# --- 1. PREPARAZIONE DATI ---
+# Assicuriamoci che il target sia un fattore valido (nomi validi per R, niente spazi o numeri iniziali)
+# Caret preferisce livelli come "Class0", "Class1" piuttosto che "0", "1" per calcolare le probabilità
+df_subset$is_fraud      <- make.names(as.factor(df_subset$is_fraud))
+data_semi_test$is_fraud <- make.names(as.factor(data_semi_test$is_fraud))
+
+# Convertiamo di nuovo in fattore per sicurezza
+df_subset$is_fraud      <- as.factor(df_subset$is_fraud)
+data_semi_test$is_fraud <- as.factor(data_semi_test$is_fraud)
+
+cat("--- AVVIO ADDESTRAMENTO PLS (con Caret) ---\n")
+
+# --- 2. CONFIGURAZIONE TRAINING ---
+# Dobbiamo abilitare il calcolo delle probabilità (classProbs = TRUE)
+ctrl <- trainControl(method = "cv", 
+                     number = 5,        # 5-fold Cross Validation
+                     classProbs = TRUE, # Fondamentale per ROC
+                     summaryFunction = twoClassSummary)
+
+# --- 3. ADDESTRAMENTO ---
+# method = "pls" usa l'algoritmo Partial Least Squares
+# preProcess: standardizza i dati automaticamente
+# tuneLength = 10: prova fino a 10 componenti latenti per trovare il n. ottimale
+model_pls <- train(is_fraud ~ ., 
+                   data = df_subset, 
+                   method = "pls", 
+                   preProcess = c("center", "scale"), 
+                   trControl = ctrl, 
+                   tuneLength = 10,
+                   metric = "ROC")
+
+cat("Modello addestrato. Componenti ottimali scelti:", model_pls$bestTune$ncomp, "\n")
+cat("Calcolo predizioni...\n")
+
+
+# --- 4. PREDIZIONE PROBABILITÀ ---
+# type = "prob" restituisce una matrice (Col 1: Classe A, Col 2: Classe B)
+pred_prob_train <- predict(model_pls, newdata = df_subset, type = "prob")
+pred_prob_test  <- predict(model_pls, newdata = data_semi_test,  type = "prob")
+
+# Identifichiamo la colonna della classe positiva (generalmente la seconda, es. "X1" o "fraud")
+col_positiva <- colnames(pred_prob_test)[2]
+prob_train   <- pred_prob_train[, col_positiva]
+prob_test    <- pred_prob_test[, col_positiva]
+
+cat("Colonna probabilità utilizzata:", col_positiva, "\n")
+
+
+# --- 5. CREAZIONE CURVE ROC ---
+# Attenzione: make.names potrebbe aver cambiato "0" in "X0" e "1" in "X1"
+# roc funziona comunque basta passare il vettore corretto
+roc_train <- roc(response = df_subset$is_fraud, predictor = prob_train)
+roc_test  <- roc(response = data_semi_test$is_fraud,  predictor = prob_test)
+
+# Calcolo AUC
+auc_train <- auc(roc_train)
+auc_test  <- auc(roc_test)
+
+
+# --- 6. GRAFICO UNICO (Train + Test) ---
+
+# A. Curva TRAINING (Blu)
+plot(roc_train, 
+     col = "blue", 
+     lwd = 2, 
+     main = "ROC PLS Discriminant Analysis: Train vs Test",
+     legacy.axes = TRUE)
+
+# B. Curva TEST (Rosso)
+plot(roc_test, 
+     col = "red", 
+     lwd = 2, 
+     add = TRUE)
+
+# C. Legenda
+legend("bottomright", 
+       legend = c(paste("Train (AUC =", round(auc_train, 4), ")"),
+                  paste("Test  (AUC =", round(auc_test, 4), ")")),
+       col = c("blue", "red"),
+       lwd = 2)
+
+cat("\nGAP AUC (Train - Test):", round(auc_train - auc_test, 5), "\n")
+```
+
+## LDA
+
+```{r}
+library(MASS)  # Libreria standard per LDA/QDA
+library(pROC)
+
+# --- 1. PREPARAZIONE DATI ---
+# Assicuriamoci che il target sia un fattore
+df_subset$is_fraud      <- as.factor(df_subset$is_fraud)
+data_semi_test$is_fraud <- as.factor(data_semi_test$is_fraud)
+
+cat("--- AVVIO ADDESTRAMENTO LDA ---\n")
+
+# --- 2. ADDESTRAMENTO ---
+# La LDA assume normalità e omoschedasticità (varianze uguali)
+model_lda <- lda(is_fraud ~ ., data = df_subset)
+
+cat("Modello addestrato. Calcolo predizioni...\n")
+
+
+# --- 3. PREDIZIONE PROBABILITÀ ---
+# La predict della LDA restituisce una LISTA. 
+# Ci interessa l'elemento $posterior (che è una matrice di probabilità)
+pred_obj_train <- predict(model_lda, newdata = df_subset)
+pred_obj_test  <- predict(model_lda, newdata = data_semi_test)
+
+# Estraiamo la matrice delle probabilità (posterior probabilities)
+raw_prob_train <- pred_obj_train$posterior
+raw_prob_test  <- pred_obj_test$posterior
+
+# Selezioniamo la colonna della classe positiva (generalmente la seconda)
+col_positiva <- colnames(raw_prob_test)[2]
+
+prob_train <- raw_prob_train[, col_positiva]
+prob_test  <- raw_prob_test[, col_positiva]
+
+cat("Colonna probabilità utilizzata:", col_positiva, "\n")
+
+
+# --- 4. CREAZIONE CURVE ROC ---
+roc_train <- roc(response = df_subset$is_fraud,      predictor = prob_train)
+roc_test  <- roc(response = data_semi_test$is_fraud, predictor = prob_test)
+
+# Calcolo AUC
+auc_train <- auc(roc_train)
+auc_test  <- auc(roc_test)
+
+
+# --- 5. GRAFICO UNICO (Train + Test) ---
+
+# A. Curva TRAINING (Blu)
+plot(roc_train, 
+     col = "blue", 
+     lwd = 2, 
+     main = "ROC Linear Discriminant Analysis (LDA): Train vs Test",
+     legacy.axes = TRUE)
+
+# B. Curva TEST (Rosso)
+plot(roc_test, 
+     col = "red", 
+     lwd = 2, 
+     add = TRUE)
+
+# C. Legenda
+legend("bottomright", 
+       legend = c(paste("Train (AUC =", round(auc_train, 4), ")"),
+                  paste("Test  (AUC =", round(auc_test, 4), ")")),
+       col = c("blue", "red"),
+       lwd = 2)
+
+cat("\nGAP AUC (Train - Test):", round(auc_train - auc_test, 5), "\n")
+```
+
+## NNET
+
+```{r}
+set.seed(1234)
+ctrlNNET <- trainControl(
+  method = "cv",
+  number = 5,
+  summaryFunction = twoClassSummary,
+  classProbs = TRUE,
+  search = "grid"
+)
+
+nnetFit <- train(
+  is_fraud ~ .,
+  data = df_subset,
+  method = "nnet",
+  metric = "ROC",
+  trControl = ctrlNNET,
+  trace = FALSE,
+  maxit = 300,
+  tuneLength = 5,
+  preProcess = c("corr", "nzv", "range")
+)
+
+# --- Predizioni train e test usando probabilit? (robusto) ---
+prob_train_nnet <- predict(nnetFit, df_subset, type = "prob")[, "fraud"]
+pred_train_nnet <- factor(ifelse(prob_train_nnet > 0.5, "fraud", "no_fraud"),
+                          levels = c("no_fraud","fraud"))
+
+prob_test_nnet <- predict(nnetFit, dataTestSubset, type = "prob")[, "fraud"]
+pred_test_nnet <- factor(ifelse(prob_test_nnet > 0.5, "fraud", "no_fraud"),
+                         levels = c("no_fraud","fraud"))
+
+
+# ROC e AUC
+roc_train_nnet <- roc(df_subset$is_fraud, prob_train_nnet)
+
+# CORREZIONE QUI SOTTO: Usa dataTestSubset anche per la target variable
+roc_test_nnet  <- roc(dataTestSubset$is_fraud, prob_test_nnet)
+
+plot.roc(roc_train_nnet, main = "CURVA ROC NNET", col = "blue")
+plot.roc(roc_test_nnet, print.auc = TRUE, auc.polygon = TRUE, add = TRUE, col = "red")
+
+```
+
+## Confronto curve ROC
+
+```{r}
+library(pROC)
+library(ggplot2)
+
+# Lista modelli
+modelli_list <- list(
+  Boosting = model_boost,
+  GLM = model_glm,
+  KNN = model_knn,
+  LDA = model_lda,
+  NaiveBayes = model_nb,
+  PLS = model_pls,
+  RandomForest = model_rf,
+  DecisionTree = model_tree
+)
+
+# --- LOOP UNIVERSALE E ROBUSTO ---
+roc_list <- lapply(modelli_list, function(modello) {
+  
+  pred_prob <- NULL
+  nome_classe_positiva <- "Si" # O "fraud", la cercheremo
+  
+  # 1. Caso GBM PURO
+  if (inherits(modello, "gbm")) {
+    pred_prob <- predict(modello, newdata = data_semi_test, 
+                         type = "response", n.trees = modello$n.trees)
+  
+  # 2. Caso GLM BASE
+  } else if (inherits(modello, "glm")) {
+    pred_prob <- predict(modello, newdata = data_semi_test, type = "response")
+  
+  # 3. Tutti gli altri (Caret, KNN3, RandomForest, Rpart, LDA, ecc.)
+  } else {
+    
+    # Tentativo generico di predizione
+    tmp_pred <- tryCatch({
+      predict(modello, newdata = data_semi_test, type = "prob")
+    }, error = function(e) {
+      # Fallback per LDA (spesso richiede type="response" o restituisce liste)
+      predict(modello, newdata = data_semi_test)
+    })
+    
+    # GESTIONE DEL FORMATO OUTPUT
+    
+    # Caso A: È una lista (tipico di LDA standard) che contiene $posterior
+    if (is.list(tmp_pred) && !is.data.frame(tmp_pred) && "posterior" %in% names(tmp_pred)) {
+      matrice_prob <- tmp_pred$posterior
+      
+    # Caso B: È già una matrice/dataframe (Caret, RF, KNN3)
+    } else {
+      matrice_prob <- tmp_pred
+    }
+    
+    # SELEZIONE DELLA COLONNA GIUSTA (Il trucco per evitare "subscript out of bounds")
+    colonne <- colnames(matrice_prob)
+    
+    if (nome_classe_positiva %in% colonne) {
+      # Se c'è la colonna "Si", prendila
+      pred_prob <- matrice_prob[, nome_classe_positiva]
+    } else {
+      # ALTRIMENTI: Prendi la SECONDA colonna (assunzione standard: colonna 1=Neg, colonna 2=Pos)
+      # Questo salva il KNN che magari ha colonne "no_fraud"/"fraud"
+      pred_prob <- matrice_prob[, 2]
+    }
+  }
+  
+  # Calcolo ROC
+  roc(data_semi_test$is_fraud, pred_prob, levels = c("No", "Si"), quiet = TRUE)
+})
+
+# --- PLOT FINALE ---
+ggroc(roc_list, legacy.axes = TRUE) + 
+  geom_abline(intercept = 0, slope = 1, color = "grey", linetype = "dashed") +
+  ggtitle("Confronto Curve ROC - Tutti i Modelli") +
+  theme_minimal()
+
+# --- CLASSIFICA ---
+auc_values <- sapply(roc_list, function(x) as.numeric(auc(x)))
+print(data.frame(Modello = names(auc_values), AUC = auc_values)[order(-auc_values),])
+```

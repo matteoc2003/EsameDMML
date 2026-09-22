@@ -1,0 +1,10 @@
+# Dataset originali (troppo grandi per GitHub, ~500 MB totali)
+fraudTrain.csv
+fraudTest.csv
+
+# File di sistema macOS
+.DS_Store
+
+# File R temporanei
+.RData
+.Rhistory

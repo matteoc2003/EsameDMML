@@ -1,0 +1,14 @@
+# Escludi le vecchie cartelle di lavoro
+DM/
+ML/
+
+# File R di sistema
+.RData
+.Rhistory
+
+# macOS
+.DS_Store
+
+# CSV grandi nella cartella ML
+TesinaML/fraudTrain.csv
+TesinaML/fraudTest.csv
